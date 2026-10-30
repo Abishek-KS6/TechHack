@@ -1,0 +1,89 @@
+# ==============================================================================
+# BrandShield AI - Render Infrastructure as Code (IaC) Blueprint Specification
+# Provisions:
+#   1. Managed PostgreSQL 16 database with vector and pg_trgm extensions
+#   2. High-concurrency Web Service running FastAPI with multi-worker Uvicorn
+# ==============================================================================
+
+version: "1"
+
+services:
+  # ----------------------------------------------------------------------------
+  # FastAPI Enterprise Application Service
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: brandshield-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/v1/health
+    numInstances: 1
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      - key: PORT
+        value: "8000"
+
+      # Automatic Render Managed PostgreSQL Binding
+      - key: DATABASE_URL
+        fromDatabase:
+          name: brandshield-postgres
+          property: connectionString
+
+      # Cryptographic secrets dynamically generated per deployment
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: HASH_CHAIN_SALT
+        generateValue: true
+
+      # Strict CORS configuration supporting Vercel and Render production origins
+      - key: CORS_ORIGINS
+        value: http://localhost:5173,http://127.0.0.1:5173,https://brandshield-frontend.onrender.com
+
+      - key: CORS_ALLOW_ORIGIN_REGEX
+        value: ^https://(.*\.vercel\.app|.*\.onrender\.com)$
+
+      # Connection pool bounds tuned for Render Starter tier
+      - key: DB_POOL_SIZE
+        value: "10"
+
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+
+      - key: DB_POOL_TIMEOUT
+        value: "30.0"
+
+      - key: DB_POOL_RECYCLE
+        value: "1800"
+
+  # ----------------------------------------------------------------------------
+  # React + Vite Frontend Dashboard Service
+  # ----------------------------------------------------------------------------
+  - type: static
+    name: brandshield-frontend
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: brandshield-api
+          property: host
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+# ------------------------------------------------------------------------------
+# Managed PostgreSQL 16 Database
+# ------------------------------------------------------------------------------
+databases:
+  - name: brandshield-postgres
+    databaseName: brandshield_ai
+    user: brandshield_admin
+    plan: starter
+    region: oregon
+    postgresMajorVersion: "16"

@@ -1,0 +1,73 @@
+# ==============================================================================
+# BrandShield AI - Production Multi-Container Orchestration (Docker Compose)
+# Services:
+#   1. db: PostgreSQL 16 with native pgvector extension & automated healthcheck
+#   2. api: Production FastAPI backend with 4 Uvicorn ASGI workers & telemetry
+# ==============================================================================
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: brandshield-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-brandshield_ai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-brandshield_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - brandshield-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: brandshield-api
+    restart: unless-stopped
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 4
+      --proxy-headers
+      --forwarded-allow-ips='*'
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-brandshield_ai}
+      SECRET_KEY: ${SECRET_KEY:-09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7}
+      HASH_CHAIN_SALT: ${HASH_CHAIN_SALT:-b5a8370d9e2948bb8f0b7305988147d3}
+      CORS_ALLOW_ORIGIN_REGEX: "^https://.*\\.vercel\\.app$"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - brandshield-net
+
+volumes:
+  pgvector_data:
+    driver: local
+
+networks:
+  brandshield-net:
+    driver: bridge
